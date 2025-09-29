@@ -1,5 +1,5 @@
 import React from "react";
-import { Head, useForm, usePage } from "@inertiajs/react";
+import { Head, useForm, usePage, router } from "@inertiajs/react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -30,8 +30,22 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Menu, LogOut, Pencil } from "lucide-react";
+import { Menu, LogOut, Pencil, Plus } from "lucide-react";
 import { PageProps } from "@/types";
+
+// Recharts
+import {
+    AreaChart,
+    Area,
+    XAxis,
+    YAxis,
+    CartesianGrid,
+    Tooltip,
+    ResponsiveContainer,
+    BarChart,
+    Bar,
+    Legend,
+} from "recharts";
 
 type AdminUser = {
     id: number;
@@ -57,10 +71,7 @@ type SharedProps = {
     admin?: AdminUser | null;
     csrfToken?: string;
     products: Product[];
-    can: {
-        create: boolean;
-        edit_image: boolean;
-    };
+    can: { create: boolean; edit_image: boolean };
 };
 
 type FilterType = "all" | "cookie" | "sandwich" | "drink";
@@ -70,13 +81,12 @@ export default function Dashboard() {
     const admin = props.admin || null;
     const products = props.products || [];
     const can = props.can || { create: false, edit_image: false };
-
     const csrf = (props as any).csrfToken || (window as any).Laravel?.csrfToken;
 
-    // Tabs principais: products / orders
-    const [tab, setTab] = React.useState<string>("products");
+    // tabs: overview / products / orders
+    const [tab, setTab] = React.useState<string>("overview");
 
-    // Filtro local por categoria
+    // filtro products
     const [filter, setFilter] = React.useState<FilterType>("all");
     const filtered = React.useMemo(() => {
         if (filter === "all") return products;
@@ -92,11 +102,51 @@ export default function Dashboard() {
         ).toUpperCase();
     }, [admin?.name]);
 
-    // ---------- Modal de Edição ----------
+    // -------- Overview (metrics) --------
+    const [loadingMetrics, setLoadingMetrics] = React.useState(true);
+    const [ordersByStatus, setOrdersByStatus] = React.useState<
+        Record<string, number>
+    >({});
+    const [productsByCategory, setProductsByCategory] = React.useState<
+        Record<string, number>
+    >({});
+    const [ordersLast7Days, setOrdersLast7Days] = React.useState<
+        { date: string; qty: number }[]
+    >([]);
+
+    React.useEffect(() => {
+        fetch("/admin/metrics", {
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+        })
+            .then((r) => r.json())
+            .then((d) => {
+                setOrdersByStatus(d.ordersByStatus || {});
+                setProductsByCategory(d.productsByCategory || {});
+                setOrdersLast7Days(d.ordersLast7Days || []);
+            })
+            .finally(() => setLoadingMetrics(false));
+    }, []);
+
+    const statusData = React.useMemo(() => {
+        // transforma {pending: 10, confirmed: 5...} em array para BarChart
+        return Object.entries(ordersByStatus).map(([status, qty]) => ({
+            status,
+            qty,
+        }));
+    }, [ordersByStatus]);
+
+    const categoryData = React.useMemo(() => {
+        return Object.entries(productsByCategory).map(([category, qty]) => ({
+            category,
+            qty,
+        }));
+    }, [productsByCategory]);
+
+    // ---------- Edit ----------
     const [editOpen, setEditOpen] = React.useState(false);
     const [current, setCurrent] = React.useState<Product | null>(null);
 
-    const { data, setData, patch, processing, reset } = useForm<
+    const { data, setData, patch, post, processing, reset } = useForm<
         Partial<Product>
     >({
         name: "",
@@ -120,6 +170,19 @@ export default function Dashboard() {
         setEditOpen(true);
     }
 
+    function openCreate() {
+        setCurrent(null);
+        setData({
+            name: "",
+            description: "",
+            price: "",
+            category: "cookie",
+            image_path: "",
+            active: true,
+        });
+        setEditOpen(true);
+    }
+
     function onCloseEdit() {
         setEditOpen(false);
         setCurrent(null);
@@ -129,8 +192,15 @@ export default function Dashboard() {
     function submitEdit(e: React.FormEvent) {
         e.preventDefault();
         if (!current) return;
-
         patch(`/admin/products/${current.id}`, {
+            preserveScroll: true,
+            onSuccess: () => onCloseEdit(),
+        });
+    }
+
+    function submitCreate(e: React.FormEvent) {
+        e.preventDefault();
+        post(`/admin/products`, {
             preserveScroll: true,
             onSuccess: () => onCloseEdit(),
         });
@@ -149,7 +219,24 @@ export default function Dashboard() {
 
     return (
         <>
-            <Head title="Admin • Cookieland" />
+            <Head title="Admin • Cookieland">
+                {/* SEO + favicon */}
+                <link rel="icon" href="/assets/img/icon.png" />
+                <meta
+                    name="description"
+                    content="Cookieland admin dashboard to manage products and track orders."
+                />
+                <meta property="og:title" content="Cookieland • Admin" />
+                <meta
+                    property="og:description"
+                    content="Manage products and track orders at Cookieland."
+                />
+                <meta
+                    property="og:image"
+                    content="/assets/img/cookie-banner.jpg"
+                />
+                <meta property="og:type" content="website" />
+            </Head>
 
             <Tabs
                 value={tab}
@@ -164,8 +251,11 @@ export default function Dashboard() {
                         </h1>
 
                         <div className="flex items-center gap-3">
-                            {/* Abas (desktop) — sem Add-ons */}
+                            {/* Abas (desktop) */}
                             <TabsList className="hidden md:inline-flex">
+                                <TabsTrigger value="overview">
+                                    Overview
+                                </TabsTrigger>
                                 <TabsTrigger value="products">
                                     Products
                                 </TabsTrigger>
@@ -254,6 +344,16 @@ export default function Dashboard() {
                                     <div className="grid gap-2">
                                         <Button
                                             variant={
+                                                tab === "overview"
+                                                    ? "default"
+                                                    : "secondary"
+                                            }
+                                            onClick={() => setTab("overview")}
+                                        >
+                                            Overview
+                                        </Button>
+                                        <Button
+                                            variant={
                                                 tab === "products"
                                                     ? "default"
                                                     : "secondary"
@@ -299,15 +399,113 @@ export default function Dashboard() {
 
                 {/* MAIN */}
                 <main className="max-w-6xl mx-auto px-4 py-6 w-full">
+                    {/* OVERVIEW */}
+                    <TabsContent value="overview" className="mt-0">
+                        <div className="grid gap-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {/* Orders Last 7 Days */}
+                                <div className="border rounded-lg p-4">
+                                    <div className="mb-3 font-medium">
+                                        Orders • last 7 days
+                                    </div>
+                                    <div className="h-64">
+                                        <ResponsiveContainer
+                                            width="100%"
+                                            height="100%"
+                                        >
+                                            <AreaChart data={ordersLast7Days}>
+                                                <defs>
+                                                    <linearGradient
+                                                        id="colorQty"
+                                                        x1="0"
+                                                        y1="0"
+                                                        x2="0"
+                                                        y2="1"
+                                                    >
+                                                        <stop
+                                                            offset="5%"
+                                                            stopColor="currentColor"
+                                                            stopOpacity={0.3}
+                                                        />
+                                                        <stop
+                                                            offset="95%"
+                                                            stopColor="currentColor"
+                                                            stopOpacity={0}
+                                                        />
+                                                    </linearGradient>
+                                                </defs>
+                                                <CartesianGrid strokeDasharray="3 3" />
+                                                <XAxis dataKey="date" />
+                                                <YAxis allowDecimals={false} />
+                                                <Tooltip />
+                                                <Area
+                                                    type="monotone"
+                                                    dataKey="qty"
+                                                    stroke="currentColor"
+                                                    fill="url(#colorQty)"
+                                                />
+                                            </AreaChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+
+                                {/* Orders by status */}
+                                <div className="border rounded-lg p-4">
+                                    <div className="mb-3 font-medium">
+                                        Orders • by status
+                                    </div>
+                                    <div className="h-64">
+                                        <ResponsiveContainer
+                                            width="100%"
+                                            height="100%"
+                                        >
+                                            <BarChart data={statusData}>
+                                                <CartesianGrid strokeDasharray="3 3" />
+                                                <XAxis dataKey="status" />
+                                                <YAxis allowDecimals={false} />
+                                                <Tooltip />
+                                                <Legend />
+                                                <Bar dataKey="qty" />
+                                            </BarChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Products by category */}
+                            <div className="border rounded-lg p-4">
+                                <div className="mb-3 font-medium">
+                                    Products • by category
+                                </div>
+                                <div className="h-72">
+                                    <ResponsiveContainer
+                                        width="100%"
+                                        height="100%"
+                                    >
+                                        <BarChart data={categoryData}>
+                                            <CartesianGrid strokeDasharray="3 3" />
+                                            <XAxis dataKey="category" />
+                                            <YAxis allowDecimals={false} />
+                                            <Tooltip />
+                                            <Legend />
+                                            <Bar dataKey="qty" />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                        </div>
+                    </TabsContent>
+
+                    {/* PRODUCTS */}
                     <TabsContent value="products" className="mt-0">
                         <div className="grid gap-4">
-                            {/* Título + criar */}
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                                 <h2 className="text-lg font-medium">
                                     Manage Products
                                 </h2>
                                 {can.create && (
-                                    <Button /* onClick={() => ...} */>
+                                    <Button onClick={openCreate}>
+                                        <Plus className="h-4 w-4 mr-2" />
                                         Create Product
                                     </Button>
                                 )}
@@ -364,7 +562,7 @@ export default function Dashboard() {
                                 </Button>
                             </div>
 
-                            {/* GRID responsivo de produtos (filtrado) */}
+                            {/* GRID */}
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                                 {filtered.map((p) => (
                                     <div
@@ -428,6 +626,7 @@ export default function Dashboard() {
                                                     href={`/${p.image_path}`}
                                                     target="_blank"
                                                     className="text-xs underline text-neutral-500"
+                                                    rel="noreferrer"
                                                 >
                                                     Image
                                                 </a>
@@ -439,25 +638,31 @@ export default function Dashboard() {
                         </div>
                     </TabsContent>
 
+                    {/* ORDERS (placeholder) */}
                     <TabsContent value="orders" className="mt-0">
                         <div className="grid gap-4">
                             <h2 className="text-lg font-medium">Orders</h2>
                             <div className="text-sm text-neutral-600">
-                                Orders per status com accordion — em breve.
+                                Overview por status e detalhes — em breve.
                             </div>
                         </div>
                     </TabsContent>
                 </main>
             </Tabs>
 
-            {/* MODAL: Editar Produto */}
+            {/* MODAL CREATE/EDIT */}
             <Dialog open={editOpen} onOpenChange={setEditOpen}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Edit product</DialogTitle>
+                        <DialogTitle>
+                            {current ? "Edit product" : "Create product"}
+                        </DialogTitle>
                     </DialogHeader>
 
-                    <form onSubmit={submitEdit} className="grid gap-4">
+                    <form
+                        onSubmit={current ? submitEdit : submitCreate}
+                        className="grid gap-4"
+                    >
                         <div className="grid gap-2">
                             <Label htmlFor="name">Name</Label>
                             <Input
@@ -495,7 +700,7 @@ export default function Dashboard() {
                             />
                         </div>
 
-                        {/* Campos só para superadmin */}
+                        {/* Campos restritos a superadmin */}
                         {can.edit_image && (
                             <>
                                 <div className="grid gap-2">
@@ -564,7 +769,7 @@ export default function Dashboard() {
                                 Cancel
                             </Button>
                             <Button type="submit" disabled={processing}>
-                                Save
+                                {current ? "Save" : "Create"}
                             </Button>
                         </DialogFooter>
                     </form>
