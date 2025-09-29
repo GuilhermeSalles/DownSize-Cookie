@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\AdminGoogleController;
 use App\Http\Controllers\Admin\DashboardController;
+use App\Http\Controllers\Admin\ProductController;
 
 Route::view('/', 'site.index')->name('site.home');
 Route::view('/terms', 'site.terms')->name('site.terms');
@@ -27,6 +28,11 @@ Route::middleware('auth:admin')->prefix('admin')->name('admin.')->group(function
         request()->session()->regenerateToken();
         return redirect()->route('site.home');
     })->name('logout');
+});
+
+Route::middleware(['web', 'auth:admin'])->group(function () {
+    Route::get('/admin', [ProductController::class, 'index'])->name('admin.dashboard');
+    Route::patch('/admin/products/{product}', [ProductController::class, 'update'])->name('admin.products.update');
 });
 
 // alias antigo (se sua view usa esse nome)
