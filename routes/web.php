@@ -1,10 +1,12 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Auth;
 
 use App\Http\Controllers\Auth\AdminGoogleController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\ProductController;
+use App\Http\Controllers\Admin\OrderController;
 
 use App\Http\Middleware\AdminOnly;
 use App\Http\Middleware\AdminRole;
@@ -29,37 +31,32 @@ Route::get('/auth/google/callback', [AdminGoogleController::class, 'callback'])
 |--------------------------------------------------------------------------
 | Admin
 |--------------------------------------------------------------------------
-|
-| - A rota /admin exige login do guard 'admin' (feito por você) + AdminOnly
-| - AdminRole garante que 'user' não entra; admin e superadmin entram.
-| - Dentro enviamos props para o Dashboard via Inertia.
-|
+| Guard 'auth:admin' + AdminOnly + AdminRole
 */
-
 Route::middleware(['web', 'auth:admin', AdminOnly::class, AdminRole::class])
     ->prefix('admin')
     ->group(function () {
-        Route::get('/', [DashboardController::class, 'index'])
-            ->name('admin.dashboard');
+        Route::get('/', [DashboardController::class, 'index'])->name('admin.dashboard');
 
         // Products
-        Route::get('/products', [ProductController::class, 'index'])
-            ->name('admin.products.index');
-        Route::patch('/products/{product}', [ProductController::class, 'update'])
-            ->name('admin.products.update');
+        Route::get('/products', [ProductController::class, 'index'])->name('admin.products.index');
+        Route::patch('/products/{product}', [ProductController::class, 'update'])->name('admin.products.update');
+        Route::post('/products', [ProductController::class, 'store'])->name('admin.products.store');
 
-        // Só superadmin cria
-        Route::post('/products', [ProductController::class, 'store'])
-            ->middleware('can:create-products')
-            ->name('admin.products.store');
 
-        // Métricas para os gráficos (retorna JSON usado no front)
-        Route::get('/metrics', [DashboardController::class, 'metrics'])
-            ->name('admin.metrics');
+        // Orders
+        Route::get('/orders', [OrderController::class, 'index'])->name('admin.orders.index');
+        Route::patch('/orders/{order}/status', [OrderController::class, 'updateStatus'])->name('admin.orders.updateStatus');
+
+        // Só policy (sem can:create-products aqui, a checagem fica no controller)
+        Route::post('/products', [ProductController::class, 'store'])->name('admin.products.store');
+
+        // Metrics
+        Route::get('/metrics', [DashboardController::class, 'metrics'])->name('admin.metrics');
 
         // Logout
         Route::post('/logout', function () {
-            auth('admin')->logout();
+            Auth::guard('admin')->logout();
             request()->session()->invalidate();
             request()->session()->regenerateToken();
             return redirect()->route('site.home');
